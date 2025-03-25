@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ja">
+<link href="https://unpkg.com/@coreui/icons/css/all.min.css" rel="stylesheet">
+  <meta charset="UTF-8">
+  <title>アルバム画像生成</title>
+  <style>
+    body { font-family: 'Helvetica Neue', sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
+    h2, h3, h5 { text-align: center; }
+
+    #artistInput {
+      width: 80%;
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      margin: 0 auto 20px;
+      display: block;
+      font-size: 16px;
+    }
+
+    #artistSuggestions, #albumSection {
+      background: #fff; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      width: 80%; margin: 0 auto 20px;
+    }
+
+    .suggestion, .album-item {
+      padding: 8px; border-radius: 5px; cursor: pointer;
+    }
+    .suggestion:hover, .album-item:hover {
+      background-color: #f5f5f5;
+    }
+
+    .album-item img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; }
+    .album-item { display: flex; align-items: center; gap: 10px; }
+
+    #loadMore {
+      display: none;
+      margin: 20px auto;
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #loadMore:hover { background-color: #45a049; }
+
+    #bingoBoard {
+      display: grid;
+      grid-template-columns: repeat(3, 120px);
+      grid-template-rows: repeat(3, 120px);
+      gap: 10px;
+      margin: 30px auto;
+      width: max-content;
+    }
+
+    .bingo-cell {
+      border: 2px solid #333;
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .bingo-cell img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .delete-btn {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background: rgba(255, 0, 0, 0.7);
+      color: #fff;
+      border: none;
+      padding: 5px 8px;
+      border-radius: 5px;
+      font-size: 12px;
+      display: none;
+      cursor: pointer;
+    }
+
+    .bingo-cell:hover .delete-btn {
+      display: block;
+    }
+
+    .dragging { opacity: 0.5; }
+  </style>
+</head>
+<body>
+  <h5>①アルバムをアーティスト名orアルバム名から9or25枚選ぶ</h5>
+  <input type="text" id="artistInput" placeholder="アーティスト名orアルバム名で検索">
+  <div id="artistSuggestions" style="display:none;"></div>
+
+  <div id="albumSection" style="display:none;">
+    <h3>アルバムから選ぶ（クリックで追加）</h3>
+    <div id="albumList"></div>
+    <button id="loadMore">もっと見る</button>
+  </div>
+
+  <h3>ボード (ドラッグで入れ替え可)</h3>
+  <div id="bingoBoard"></div>
+  <h5>②画像生成をクリックして画像を作成する</h5>
+  <button id="generateImage" style="display:block; margin: 20px auto; padding: 10px 20px; background:#333; color:#fff; border:none; border-radius:8px; cursor:pointer;">画像生成</button>
+  <canvas id="bingoCanvas" style="display:none;"></canvas>
+  <h5>③画像を保存するか共有ボタンにて共有する</h5>
+  <button id="shareBtn" style="display:block; margin: 20px auto; padding: 10px; background:#1DA1F2; color:#fff; border:none; border-radius:8px; cursor:pointer;">
+  共有
+</button>
+
+  <script>
+    const artistInput = document.getElementById('artistInput');
+    const artistSuggestions = document.getElementById('artistSuggestions');
+    const albumSection = document.getElementById('albumSection');
+    const albumList = document.getElementById('albumList');
+    const loadMoreBtn = document.getElementById('loadMore');
+    const bingoBoard = document.getElementById('bingoBoard');
+
+    let allAlbums = [];
+    let albumOffset = 0;
+    const perPage = 5;
+    let bingoSlots = [];
+    let draggedCell = null;
+
+    function initBingo(size) {
+      bingoBoard.style.gridTemplateColumns = `repeat(${size}, 120px)`;
+      bingoBoard.style.gridTemplateRows = `repeat(${size}, 120px)`;
+      for (let i = 0; i < size * size; i++) {
+        const cell = createBingoCell();
+        bingoBoard.appendChild(cell);
+        bingoSlots.push(cell);
+      }
+    }
+
+    function createBingoCell() {
+      const cell = document.createElement('div');
+      cell.className = 'bingo-cell';
+      cell.textContent = 'EMPTY';
+      cell.dataset.empty = 'true';
+      cell.draggable = true;
+      addDragEvents(cell);
+      return cell;
+    }
+
+    initBingo(3);
+
+    artistInput.addEventListener('input', async () => {
+      // 入力時にアルバム一覧をリセット
+      albumList.innerHTML = '';
+      albumSection.style.display = 'none';
+      const query = artistInput.value.trim();
+      if (query.length < 2) {
+        artistSuggestions.style.display = 'none';
+        artistSuggestions.innerHTML = '';
+        return;
+      }
+      let res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=musicArtist&limit=5&country=JP`);
+      let data = await res.json();
+
+      // アーティストが見つからなければアルバム検索に切り替え
+      if (data.results.length === 0) {
+        res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=album&limit=1&country=JP`);
+        data = await res.json();
+
+        if (data.results.length === 0) {
+          artistSuggestions.style.display = 'none';
+          artistSuggestions.innerHTML = '<div>該当なし</div>';
+          return;
+        }
+
+        artistSuggestions.style.display = 'block';
+        artistSuggestions.innerHTML = '';
+        data.results.forEach(album => {
+          const div = document.createElement('div');
+          div.className = 'suggestion';
+          div.textContent = `${album.collectionName} / ${album.artistName}`;
+          div.onclick = () => {
+            artistInput.value = `${album.collectionName} / ${album.artistName}`;
+            artistSuggestions.style.display = 'none';
+            artistSuggestions.innerHTML = '';
+            showSingleAlbum(album);
+          };
+          artistSuggestions.appendChild(div);
+        });
+
+      } else {
+        artistSuggestions.style.display = 'block';
+        artistSuggestions.innerHTML = '';
+        data.results.forEach(artist => {
+        const div = document.createElement('div');
+        div.className = 'suggestion';
+        div.textContent = artist.artistName;
+        div.onclick = () => {
+          artistInput.value = artist.artistName;
+          artistSuggestions.style.display = 'none';
+          artistSuggestions.innerHTML = '';
+          fetchAlbums(artist.artistId);
+        };
+        artistSuggestions.appendChild(div);
+        });
+      }
+    });
+
+    async function showSingleAlbum(album) {
+      allAlbums = [album];
+      albumOffset = 0;
+      albumList.innerHTML = '';
+      albumSection.style.display = 'block';
+      renderAlbums();
+    }
+
+    async function fetchAlbums(artistId) {
+      const res = await fetch(`https://itunes.apple.com/lookup?id=${artistId}&entity=album&limit=200`);
+      const data = await res.json();
+      allAlbums = data.results.filter(item => item.collectionName);
+      albumOffset = 0;
+      albumList.innerHTML = '';
+      albumSection.style.display = 'block';
+      renderAlbums();
+    }
+
+    function renderAlbums() {
+      const slice = allAlbums.slice(albumOffset, albumOffset + perPage);
+      slice.forEach(item => {
+        const albumDiv = document.createElement('div');
+        albumDiv.className = 'album-item';
+        albumDiv.innerHTML = `<img src="${item.artworkUrl100.replace('100x100bb', '200x200bb')}"> <div><strong>${item.collectionName}</strong><br><small>${item.releaseDate.substring(0, 4)}</small></div>`;
+        albumDiv.onclick = () => addAlbumToBingo(item);
+        albumList.appendChild(albumDiv);
+      });
+      albumOffset += perPage;
+      loadMoreBtn.style.display = (albumOffset < allAlbums.length) ? 'block' : 'none';
+    }
+
+    loadMoreBtn.addEventListener('click', renderAlbums);
+
+    function addAlbumToBingo(album) {
+      const filledCount = bingoSlots.filter(cell => cell.dataset.empty === 'false').length;
+
+      // 10枚目選択時に5x5へ拡張する（4x4はスキップ）
+      if (filledCount === 9) expandBingoBoard(5);
+
+      const emptyCell = bingoSlots.find(cell => cell.dataset.empty === 'true');
+      if (!emptyCell) return alert('ビンゴが埋まりました！');
+
+      emptyCell.innerHTML = `<img src="${album.artworkUrl100.replace('100x100bb', '200x200bb')}" alt="${album.collectionName} / ${album.artistName} (${album.releaseDate.substring(0, 4)})">
+        <button class="delete-btn">×</button>`;
+      emptyCell.dataset.empty = 'false';
+
+      const delBtn = emptyCell.querySelector('.delete-btn');
+      delBtn.onclick = (e) => {
+        e.stopPropagation();
+        emptyCell.innerHTML = 'EMPTY';
+        emptyCell.dataset.empty = 'true';
+
+        const filledCount = bingoSlots.filter(cell => cell.dataset.empty === 'false').length;
+        if (filledCount < 10 && bingoSlots.length > 9) {
+          // 9マスに戻す
+          bingoSlots.forEach(cell => {
+            if (cell.dataset.empty === 'true') {
+              cell.remove();
+            }
+          });
+          bingoSlots = bingoSlots.filter(cell => cell.isConnected);
+          bingoBoard.style.gridTemplateColumns = 'repeat(3, 120px)';
+          bingoBoard.style.gridTemplateRows = 'repeat(3, 120px)';
+        }
+      };
+    }
+
+    function expandBingoBoard(size) {
+      bingoBoard.style.gridTemplateColumns = `repeat(${size}, 120px)`;
+      bingoBoard.style.gridTemplateRows = `repeat(${size}, 120px)`;
+      const total = size * size;
+      while (bingoSlots.length < total) {
+        const cell = createBingoCell();
+        bingoBoard.appendChild(cell);
+        bingoSlots.push(cell);
+      }
+    }
+
+    function addDragEvents(cell) {
+      cell.addEventListener('dragstart', (e) => {
+        draggedCell = cell;
+        cell.classList.add('dragging');
+      });
+      cell.addEventListener('dragend', () => {
+        draggedCell = null;
+        cell.classList.remove('dragging');
+        // 明示的に全セルから.draggingを外す（バグ対策）
+        bingoSlots.forEach(slot => slot.classList.remove('dragging'));
+      });
+      cell.addEventListener('dragover', (e) => e.preventDefault());
+      cell.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (draggedCell && draggedCell !== cell) {
+          const tempHTML = draggedCell.innerHTML;
+          const tempEmpty = draggedCell.dataset.empty;
+          draggedCell.innerHTML = cell.innerHTML;
+          draggedCell.dataset.empty = cell.dataset.empty;
+          cell.innerHTML = tempHTML;
+          cell.dataset.empty = tempEmpty;
+
+          // 交換後、念のため両方のドラッグクラスを消す
+          draggedCell.classList.remove('dragging');
+          cell.classList.remove('dragging');
+        }
+      });
+    }
+  
+    // 画像生成ロジック
+    document.getElementById('generateImage').addEventListener('click', () => {
+      const canvas = document.getElementById('bingoCanvas');
+      const ctx = canvas.getContext('2d');
+      const size = Math.sqrt(bingoSlots.length);
+      const cellSize = 200;
+      const infoWidth = 400;
+      canvas.width = cellSize * size + infoWidth;
+      canvas.height = cellSize * size;
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const albumInfo = [];
+      const images = [];
+      let loaded = 0;
+
+      bingoSlots.forEach((cell, i) => {
+        const imgTag = cell.querySelector('img');
+        if (imgTag) {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = `https://corsproxy.io/?${imgTag.src}`;
+          images[i] = img;
+          const info = cell.querySelector('img').nextSibling?.textContent || '';
+          albumInfo.push(info);
+          img.onload = () => {
+            loaded++;
+            if (loaded === bingoSlots.filter(c => c.dataset.empty === 'false').length) draw();
+          }
+        }
+      });
+
+      function draw() {
+        images.forEach((img, i) => {
+          const x = (i % size) * cellSize;
+          const y = Math.floor(i / size) * cellSize;
+          if (img) ctx.drawImage(img, x, y, cellSize, cellSize);
+        });
+
+        ctx.fillStyle = 'white';
+        ctx.font = '10px sans-serif';
+        ctx.textBaseline = 'top';
+
+        // アルバム情報（縦リスト）
+        for (let row = 0; row < size; row++) {
+          for (let col = 0; col < size; col++) {
+            const index = row * size + col;
+            const cell = bingoSlots[index];
+            const albumName = cell.querySelector('img') ? (cell.querySelector('img').alt || 'アルバム') : '';
+            if (albumName) {
+              ctx.fillText(albumName, cellSize * size + 10, row * cellSize + col * 16);
+            }
+          }
+        }
+        canvas.style.display = 'block';
+      }
+    });
+  
+    // SNS投稿ボタンの処理
+    document.getElementById('shareBtn').addEventListener('click', () => {
+      const canvas = document.getElementById('bingoCanvas');
+      if (!canvas || canvas.style.display === 'none') {
+        alert('先に画像生成してください');
+        return;
+      }
+      const dataUrl = canvas.toDataURL('image/png');
+
+      // Twitter投稿例（ユーザーの操作で別タブ）
+      const message = `#私が影響を受けたアルバム${bingoSlots.length}`
+      const blob = dataURLtoBlob(dataUrl);
+      const file = new File([blob], "bingo.png", { type: "image/png" });
+      const shareData = {
+        files: [file],
+        text: message,
+      };
+      if (navigator.canShare && navigator.canShare(shareData)) {
+        navigator.share(shareData).catch(console.error);
+      } else {
+        // fallback: Twitter intent（画像投稿は不可なので案内）
+        const tweetText = encodeURIComponent(message);
+        window.open(`https://twitter.com/intent/tweet?text=${tweetText}`, '_blank');
+      }
+
+      function dataURLtoBlob(dataurl) {
+        const arr = dataurl.split(',');
+        const mime = arr[0].match(/:(.*?);/)[1];
+        const bstr = atob(arr[1]);
+        const len = bstr.length;
+        const u8arr = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          u8arr[i] = bstr.charCodeAt(i);
+        }
+        return new Blob([u8arr], { type: mime });
+      }
+    });
+
+  
+    // 保存処理
+    function saveBingoState() {
+      const state = bingoSlots.map(cell => ({
+        img: cell.querySelector('img')?.src || null,
+        alt: cell.querySelector('img')?.alt || null,
+        empty: cell.dataset.empty
+      }));
+      localStorage.setItem('bingoState', JSON.stringify(state));
+    }
+
+    // 復元処理
+    function restoreBingoState() {
+      const saved = localStorage.getItem('bingoState');
+      if (!saved) return;
+      const state = JSON.parse(saved);
+      state.forEach((data, index) => {
+        if (!bingoSlots[index]) expandBingoBoard(Math.ceil(Math.sqrt(state.length)));
+        if (data.img) {
+          bingoSlots[index].innerHTML = `<img src="${data.img}" alt="${data.alt}"><button class="delete-btn">×</button>`;
+          bingoSlots[index].dataset.empty = 'false';
+          const delBtn = bingoSlots[index].querySelector('.delete-btn');
+          delBtn.onclick = (e) => {
+            e.stopPropagation();
+            bingoSlots[index].innerHTML = 'EMPTY';
+            bingoSlots[index].dataset.empty = 'true';
+            saveBingoState();
+          };
+        } else {
+          bingoSlots[index].innerHTML = 'EMPTY';
+          bingoSlots[index].dataset.empty = 'true';
+        }
+      });
+    }
+
+    // 起動時に復元
+    window.addEventListener('load', restoreBingoState);
+
+    // addAlbumToBingo内に保存追加
+    const originalAddAlbum = addAlbumToBingo;
+    addAlbumToBingo = function(album) {
+      originalAddAlbum(album);
+      saveBingoState();
+    }
+
+    // 削除ボタン内にも保存追加（既に入っているのでスキップ）
+  </script>
+</body>
+</html>
