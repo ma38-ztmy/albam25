@@ -4,33 +4,59 @@
   <meta charset="UTF-8">
   <title>アルバム画像生成</title>
   <style>
-    body { font-family: 'Helvetica Neue', sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
+    body {
+      font-family: 'Helvetica Neue', sans-serif;
+      padding: 10px;
+      background: #f0f2f5;
+      color: #333;
+      max-width: 600px;
+      margin: auto;
+    }
+
     h2, h3, h5 { text-align: center; }
 
     #artistInput {
-      width: 80%;
+      width: 100%;
       padding: 12px;
       border-radius: 8px;
       border: 1px solid #ccc;
-      margin: 0 auto 20px;
-      display: block;
+      margin-bottom: 20px;
       font-size: 16px;
     }
 
     #artistSuggestions, #albumSection {
-      background: #fff; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      width: 80%; margin: 0 auto 20px;
+      background: #fff;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      width: 100%;
+      margin-bottom: 20px;
     }
 
     .suggestion, .album-item {
-      padding: 8px; border-radius: 5px; cursor: pointer;
+      padding: 8px;
+      border-radius: 5px;
+      cursor: pointer;
+      word-break: break-word;
     }
+
     .suggestion:hover, .album-item:hover {
       background-color: #f5f5f5;
     }
 
-    .album-item img { width: 50px; height: 50px; object-fit: cover; border-radius: 4px; margin-right: 10px; }
-    .album-item { display: flex; align-items: center; gap: 10px; }
+    .album-item img {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 4px;
+      margin-right: 10px;
+    }
+
+    .album-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
 
     #loadMore {
       display: none;
@@ -43,15 +69,15 @@
       font-size: 16px;
       cursor: pointer;
     }
-    #loadMore:hover { background-color: #45a049; }
 
     #bingoBoard {
       display: grid;
-      grid-template-columns: repeat(3, 120px);
-      grid-template-rows: repeat(3, 120px);
-      gap: 10px;
-      margin: 30px auto;
-      width: max-content;
+      grid-template-columns: repeat(3, 30vw);
+      grid-auto-rows: 30vw;
+      gap: 5px;
+      margin: 20px auto;
+      width: 100%;
+      max-width: 600px;
     }
 
     .bingo-cell {
@@ -90,6 +116,23 @@
     }
 
     .dragging { opacity: 0.5; }
+
+    button, #generateImage, #shareBtn {
+      width: 100%;
+      max-width: 500px;
+      margin: 10px auto;
+      display: block;
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+    }
+
+    #generateImage { background: #333; color: #fff; }
+    #shareBtn { background: #1DA1F2; color: #fff; }
+
+    canvas { width: 100%; height: auto; display: block; margin: 10px auto; }
   </style>
 </head>
 <body>
@@ -381,7 +424,7 @@
       const dataUrl = canvas.toDataURL('image/png');
 
       // Twitter投稿例（ユーザーの操作で別タブ）
-      const message = `#私が影響を受けたアルバム${bingoSlots.length}`
+      const message = `#私が影響を受けたアルバム${bingoSlots.length}枚`
       const blob = dataURLtoBlob(dataUrl);
       const file = new File([blob], "bingo.png", { type: "image/png" });
       const shareData = {
